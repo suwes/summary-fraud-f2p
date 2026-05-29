@@ -7,6 +7,7 @@ const CONFIG = {
   },
   SUMMARY_HEADERS: [
     'Bulan Periode', 'Nama Hub', 'Kota', 'Provinsi', 'Region', 'Lead', 'Asst Lead', 'PIC Area', 'Koordinator Lapangan', 'LatLon Provinsi', 'LatLong Hub', 'is_hub',
+    'is_freeze',  // ← BARU: kolom freeze setelah is_hub
     'CF COD', 'NCF COD', 'CF LND', 'NCF LND', 'CF OTHER', 'NCF OTHER',
     'Total Fraud CF', 'Total Fraud NCF',
     'COD', 'LND', 'OTHER', 'Total Fraud',
@@ -159,7 +160,8 @@ function loadAllDataFromExternalFiles(registry) {
     collectPic: [],
     payrollHold: [],
     hubs: [],
-    invoices: []
+    invoices: [],
+    freezeHubs: []  // ← BARU: tampung list hub freeze
   };
   
   let processedCount = 0;
@@ -233,6 +235,9 @@ function loadAllDataFromExternalFiles(registry) {
           case 'Invoice':
             data.invoices.push(row);
             break;
+          case 'Hub Freeze':                    // ← BARU: handle tipe data Hub Freeze
+            data.freezeHubs.push(row);
+            break;
           default:
             Logger.log(`⚠️ Tipe data tidak dikenali: ${entry.dataType}`);
         }
@@ -259,6 +264,7 @@ function loadAllDataFromExternalFiles(registry) {
   Logger.log(`Payroll Hold: ${data.payrollHold.length} rows`);
   Logger.log(`Hubs: ${data.hubs.length} rows`);
   Logger.log(`Invoices: ${data.invoices.length} rows`);
+  Logger.log(`Freeze Hubs: ${data.freezeHubs.length} rows`);  // ← BARU
   
   return data;
 }
@@ -294,6 +300,15 @@ function generateSummaryData(allData) {
   });
   
   Logger.log(`Total hubs dari HUB RAW: ${summaryMap.size}`);
+
+  // ← BARU: Build Set nama hub yang sedang freeze untuk lookup O(1)
+  const freezeSet = new Set();
+  allData.freezeHubs.forEach(freeze => {
+    // Kolom nama hub di sheet freeze adalah "hub" (lowercase)
+    const hubName = (freeze['hub'] || freeze['Hub'] || freeze['HUB'] || '').toString().toUpperCase().trim();
+    if (hubName) freezeSet.add(hubName);
+  });
+  Logger.log(`Total freeze hubs: ${freezeSet.size}`);
   
   // 2. Process Claims
   let claimProcessed = 0;
@@ -628,6 +643,9 @@ function generateSummaryData(allData) {
       
       // Check if hub name contains "HUB"
       const isHub = hubData.hub.includes('HUB') ? 1 : 0;
+
+      // ← BARU: Check if hub ada di daftar freeze (lookup O(1) ke freezeSet)
+      const isFreeze = freezeSet.has(hubData.hub) ? 1 : 0;
       
       // Count case total
       const countCaseTotal = monthData.uniqueCaseCod.size + monthData.uniqueCaseLnd.size + monthData.uniqueCaseOther.size;
@@ -649,66 +667,67 @@ function generateSummaryData(allData) {
       const totalDedicated = riderDedicated + operatorDedicated;
       
       result.push([
-        month,
-        hubData.hub,
-        hubData.city,
-        hubData.province,
-        hubData.region,
-        hubData.lead,
-        hubData.asstLead,
-        hubData.picArea,
-        hubData.koordinatorLapangan,
-        hubData.provinceLatLon,
-        hubData.hubLatLon,
-        isHub,
-        monthData.cfCod || 0,
-        monthData.ncfCod || 0,
-        monthData.cfLnd || 0,
-        monthData.ncfLnd || 0,
-        monthData.cfOther || 0,
-        monthData.ncfOther || 0,
-        totalFraudCf || 0,
-        totalFraudNcf || 0,
-        monthData.cod || 0,
-        monthData.lnd || 0,
-        monthData.other || 0,
-        totalFraud || 0,
-        monthData.riderMitraFraud || 0,
-        monthData.operatorMitraFraud || 0,
-        monthData.riderDedicatedFraud || 0,
-        monthData.operatorDedicatedFraud || 0,
-        totalMitraFraud || 0,
-        totalDedicatedFraud || 0,
-        monthData.uniqueCaseCod.size || 0,
-        monthData.uniqueCaseLnd.size || 0,
-        monthData.uniqueCaseOther.size || 0,
-        countCaseTotal || 0,
-        countCaseHub || 0,
-        countCaseDc || 0,
-        monthData.holdGaji || 0,
-        monthData.refundNek || 0,
-        monthData.refundEwallet || 0,
-        monthData.collectPic || 0,
-        totalRecovery || 0,
-        totalLoss || 0,
-        principalLoss || 0,
-        fraudHold || 0,
-        monthData.invoiceCf || 0,
-        monthData.invoiceNcf || 0,
-        monthData.invoice || 0,
-        monthData.cfEmployees.size || 0,
-        monthData.ncfEmployees.size || 0,
-        monthData.cfFraudDrivers.size || 0,
-        monthData.ncfFraudDrivers.size || 0,
-        monthData.activeEmployees.size || 0,
-        duplicateCount || 0,
-        monthData.fraudDrivers.size || 0,
-        riderMitra || 0,
-        operatorMitra || 0,
-        riderDedicated || 0,
-        operatorDedicated || 0,
-        totalMitra || 0,
-        totalDedicated || 0
+        month,                              // idx 0
+        hubData.hub,                        // idx 1
+        hubData.city,                       // idx 2
+        hubData.province,                   // idx 3
+        hubData.region,                     // idx 4
+        hubData.lead,                       // idx 5
+        hubData.asstLead,                   // idx 6
+        hubData.picArea,                    // idx 7
+        hubData.koordinatorLapangan,        // idx 8
+        hubData.provinceLatLon,             // idx 9
+        hubData.hubLatLon,                  // idx 10
+        isHub,                              // idx 11
+        isFreeze,                           // idx 12 ← BARU
+        monthData.cfCod || 0,              // idx 13
+        monthData.ncfCod || 0,             // idx 14
+        monthData.cfLnd || 0,              // idx 15
+        monthData.ncfLnd || 0,             // idx 16
+        monthData.cfOther || 0,            // idx 17
+        monthData.ncfOther || 0,           // idx 18
+        totalFraudCf || 0,                 // idx 19
+        totalFraudNcf || 0,                // idx 20
+        monthData.cod || 0,                // idx 21
+        monthData.lnd || 0,                // idx 22
+        monthData.other || 0,              // idx 23
+        totalFraud || 0,                   // idx 24
+        monthData.riderMitraFraud || 0,    // idx 25
+        monthData.operatorMitraFraud || 0, // idx 26
+        monthData.riderDedicatedFraud || 0,// idx 27
+        monthData.operatorDedicatedFraud || 0, // idx 28
+        totalMitraFraud || 0,              // idx 29
+        totalDedicatedFraud || 0,          // idx 30
+        monthData.uniqueCaseCod.size || 0, // idx 31
+        monthData.uniqueCaseLnd.size || 0, // idx 32
+        monthData.uniqueCaseOther.size || 0,// idx 33
+        countCaseTotal || 0,               // idx 34
+        countCaseHub || 0,                 // idx 35
+        countCaseDc || 0,                  // idx 36
+        monthData.holdGaji || 0,           // idx 37
+        monthData.refundNek || 0,          // idx 38
+        monthData.refundEwallet || 0,      // idx 39
+        monthData.collectPic || 0,         // idx 40
+        totalRecovery || 0,                // idx 41
+        totalLoss || 0,                    // idx 42
+        principalLoss || 0,                // idx 43
+        fraudHold || 0,                    // idx 44
+        monthData.invoiceCf || 0,          // idx 45
+        monthData.invoiceNcf || 0,         // idx 46
+        monthData.invoice || 0,            // idx 47
+        monthData.cfEmployees.size || 0,   // idx 48
+        monthData.ncfEmployees.size || 0,  // idx 49
+        monthData.cfFraudDrivers.size || 0,// idx 50
+        monthData.ncfFraudDrivers.size || 0,// idx 51
+        monthData.activeEmployees.size || 0,// idx 52
+        duplicateCount || 0,               // idx 53
+        monthData.fraudDrivers.size || 0,  // idx 54
+        riderMitra || 0,                   // idx 55
+        operatorMitra || 0,                // idx 56
+        riderDedicated || 0,               // idx 57
+        operatorDedicated || 0,            // idx 58
+        totalMitra || 0,                   // idx 59
+        totalDedicated || 0                // idx 60
       ]);
     }
   }
@@ -881,8 +900,9 @@ function writeSummaryToSheet(ss, summaryData) {
     summarySheet.getRange(2, 1, summaryData.length, summaryData[0].length)
       .setValues(summaryData);
     
-    // Format angka (kolom 13-60 adalah angka, skip kolom 12 is_hub)
-    summarySheet.getRange(2, 13, summaryData.length, 48)
+    // Format angka mulai kolom 14 (setelah is_hub di col 12 dan is_freeze di col 13)
+    // ← PERUBAHAN: geser dari 13 → 14 karena ada kolom is_freeze baru di posisi 13
+    summarySheet.getRange(2, 14, summaryData.length, 48)
       .setNumberFormat('#,##0');
   }
   
@@ -923,19 +943,20 @@ function calculateLogSummary(summaryData) {
     fraudDrivers: 0
   };
   
+  // ← PERUBAHAN: semua index geser +1 karena is_freeze masuk di idx 12
   summaryData.forEach(row => {
-    summary.cod += row[19] || 0;           // COD (kolom 20)
-    summary.lnd += row[20] || 0;           // LND (kolom 21)
-    summary.other += row[21] || 0;         // OTHER (kolom 22)
-    summary.totalFraud += row[22] || 0;    // Total Fraud (kolom 23)
-    summary.holdGaji += row[33] || 0;      // Total Hold Gaji (kolom 34)
-    summary.refundNek += row[34] || 0;     // Total Refund Nek (kolom 35)
-    summary.refundEwallet += row[35] || 0; // Total Refund E-wallet (kolom 36)
-    summary.collectPic += row[36] || 0;    // Total Collect PIC (kolom 37)
-    summary.totalRecovery += row[37] || 0; // Total Recovery (kolom 38)
-    summary.totalLoss += row[38] || 0;     // Total Loss (kolom 39)
-    summary.activeEmployees += row[46] || 0; // Total Karyawan Aktif (kolom 47)
-    summary.fraudDrivers += row[48] || 0;    // Total Karyawan Fraud (kolom 49)
+    summary.cod            += row[21] || 0;  // COD            (was 19, now 21)
+    summary.lnd            += row[22] || 0;  // LND            (was 20, now 22)
+    summary.other          += row[23] || 0;  // OTHER          (was 21, now 23)
+    summary.totalFraud     += row[24] || 0;  // Total Fraud    (was 22, now 24)
+    summary.holdGaji       += row[37] || 0;  // Hold Gaji      (was 33, now 37... wait)
+    summary.refundNek      += row[38] || 0;  // Refund NEK     (was 34, now 38)
+    summary.refundEwallet  += row[39] || 0;  // Refund Ewallet (was 35, now 39)
+    summary.collectPic     += row[40] || 0;  // Collect PIC    (was 36, now 40)
+    summary.totalRecovery  += row[41] || 0;  // Total Recovery (was 37, now 41)
+    summary.totalLoss      += row[42] || 0;  // Total Loss     (was 38, now 42)
+    summary.activeEmployees+= row[52] || 0;  // Karyawan Aktif (was 46, now 52... wait)
+    summary.fraudDrivers   += row[54] || 0;  // Karyawan Fraud (was 48, now 54)
   });
   
   return summary;
@@ -1028,7 +1049,7 @@ function showAbout() {
   const html = `
     <div style="font-family: Arial; padding: 20px;">
       <h2 style="color: #4285F4;">📊 Fraud Summary Generator</h2>
-      <p><strong>Version:</strong> 2.0.0</p>
+      <p><strong>Version:</strong> 2.1.0</p>
       <p><strong>Description:</strong> Generate summary fraud data dari berbagai file Google Sheets terpisah</p>
       <hr>
       <h3>✨ Features:</h3>
@@ -1037,6 +1058,7 @@ function showAbout() {
         <li>📊 Auto-generate summary per hub dan periode</li>
         <li>🎯 Tracking fraud CF & NCF</li>
         <li>💰 Calculate recovery dan loss otomatis</li>
+        <li>🧊 Kolom is_freeze: deteksi hub yang sedang di-freeze</li>
         <li>📝 Logging setiap eksekusi dengan detail</li>
         <li>🔄 Dynamic: Cukup update FILE_REGISTRY untuk tambah data baru</li>
       </ul>
@@ -1171,30 +1193,16 @@ function getTriggerInfo(trigger) {
   let jam = '-';
   
   try {
-    // Get trigger handler as JSON-like string for parsing
     const handlerFunction = trigger.getHandlerFunction();
-    
-    // Check if it's a weekday trigger by testing each day
     const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
     const dayNames = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
-    
-    // Try to access internal properties via workaround
     const triggerUid = trigger.getUniqueId();
-    
-    // Get all project triggers and find this one
     const allTriggers = ScriptApp.getProjectTriggers();
     for (let t of allTriggers) {
       if (t.getUniqueId() === triggerUid) {
-        // Access trigger properties through toString or other methods
-        const triggerStr = JSON.stringify(t);
-        
-        // Parse the trigger to get schedule info
-        // This is a workaround since Apps Script doesn't expose these properties directly
-        
         break;
       }
     }
-    
   } catch (e) {
     Logger.log('Error getting trigger info: ' + e);
   }
@@ -1380,8 +1388,6 @@ function showWeekdayTriggerDialog() {
 }
 
 function createWeekdayTriggers(hours) {
-  // JANGAN hapus trigger existing - hanya tambah trigger baru
-  
   const days = [
     { day: ScriptApp.WeekDay.MONDAY, name: 'Senin' },
     { day: ScriptApp.WeekDay.TUESDAY, name: 'Selasa' },
@@ -1390,7 +1396,6 @@ function createWeekdayTriggers(hours) {
     { day: ScriptApp.WeekDay.FRIDAY, name: 'Jumat' }
   ];
   
-  // Buat trigger untuk setiap hari kerja dan jam
   hours.forEach(hour => {
     days.forEach(dayInfo => {
       const trigger = ScriptApp.newTrigger('generateSummary')
@@ -1399,7 +1404,6 @@ function createWeekdayTriggers(hours) {
         .onWeekDay(dayInfo.day)
         .create();
       
-      // Simpan metadata trigger
       saveTriggerMetadata(trigger.getUniqueId(), dayInfo.name, String(hour).padStart(2, '0') + ':00');
     });
   });
@@ -1487,16 +1491,12 @@ function showTriggerDialog() {
 }
 
 function createDailyTrigger(hour) {
-  // JANGAN hapus trigger existing - hanya tambah trigger baru
-  
-  // Buat trigger baru
   const trigger = ScriptApp.newTrigger('generateSummary')
     .timeBased()
     .atHour(hour)
     .everyDays(1)
     .create();
   
-  // Simpan metadata trigger
   saveTriggerMetadata(trigger.getUniqueId(), 'Setiap hari', String(hour).padStart(2, '0') + ':00');
   
   return `Trigger berhasil dibuat! Script akan berjalan setiap hari jam ${String(hour).padStart(2, '0')}:00`;
