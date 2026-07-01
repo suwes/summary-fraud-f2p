@@ -7,10 +7,11 @@ const CONFIG = {
   },
   SUMMARY_HEADERS: [
     'Bulan Periode', 'Nama Hub', 'Kota', 'Provinsi', 'Region', 'Lead', 'Asst Lead', 'PIC Area', 'Koordinator Lapangan', 'LatLon Provinsi', 'LatLong Hub', 'is_hub',
-    'is_freeze',  // ← BARU: kolom freeze setelah is_hub
+    'is_freeze',
     'CF COD', 'NCF COD', 'CF LND', 'NCF LND', 'CF OTHER', 'NCF OTHER',
     'Total Fraud CF', 'Total Fraud NCF',
     'COD', 'LND', 'OTHER', 'Total Fraud',
+    'Case',  // ← BARU: label kombinasi tipe fraud yang aktif (idx 25)
     'Rider Mitra Fraud', 'Operator Mitra Fraud', 'Rider Dedicated Fraud', 'Operator Dedicated Fraud', 'Total Mitra Fraud', 'Total Dedicated Fraud',
     'Count COD', 'Count LND', 'Count OTHER', 'Count Case Total', 'Count Case HUB', 'Count Case DC',
     'Total Hold Gaji', 'Total Refund Nek', 'Total Refund E-wallet', 'Total Collect PIC',
@@ -45,32 +46,23 @@ function generateSummary() {
   try {
     SpreadsheetApp.getActiveSpreadsheet().toast('🔄 Memulai generate summary...', 'Processing', -1);
     
-    // Show processing indicator
     showProcessingIndicator(ss);
     
-    // 1. Baca registry
     const registry = readRegistry(ss);
     SpreadsheetApp.getActiveSpreadsheet().toast(`📁 Ditemukan ${registry.length} file aktif`, 'Processing', 3);
     
-    // 2. Load semua data dari file terpisah
     const allData = loadAllDataFromExternalFiles(registry);
     
-    // 3. Generate summary
     SpreadsheetApp.getActiveSpreadsheet().toast('⚙️ Mengkalkulasi summary...', 'Processing', -1);
     const summaryData = generateSummaryData(allData);
     
-    // 4. Tulis ke sheet
     SpreadsheetApp.getActiveSpreadsheet().toast('💾 Menulis hasil ke sheet...', 'Processing', -1);
     writeSummaryToSheet(ss, summaryData);
     
-    // 5. Rename file
     renameSpreadsheet(ss);
     
-    // 6. Log hasil
     const duration = (new Date() - startTime) / 1000;
     const totalRows = Object.values(allData).reduce((sum, arr) => sum + arr.length, 0);
-    
-    // Hitung total untuk log summary
     const logSummary = calculateLogSummary(summaryData);
     
     logExecution(ss, {
@@ -111,7 +103,6 @@ function readRegistry(ss) {
   const headers = data[0];
   const registry = [];
   
-  // Cari index kolom
   const fileNameIdx = headers.indexOf('File Name');
   const urlIdx = headers.indexOf('Spreadsheet URL');
   const statusIdx = headers.indexOf('Status');
@@ -142,11 +133,8 @@ function readRegistry(ss) {
   return registry;
 }
 
-// ===== EXTRACT SPREADSHEET ID DARI URL =====
 function extractSpreadsheetId(url) {
   if (!url) return null;
-  
-  // Pattern: /spreadsheets/d/{SPREADSHEET_ID}/
   const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   return match ? match[1] : null;
 }
@@ -161,7 +149,7 @@ function loadAllDataFromExternalFiles(registry) {
     payrollHold: [],
     hubs: [],
     invoices: [],
-    freezeHubs: []  // ← BARU: tampung list hub freeze
+    freezeHubs: []
   };
   
   let processedCount = 0;
@@ -177,7 +165,6 @@ function loadAllDataFromExternalFiles(registry) {
       
       Logger.log(`Loading file ${processedCount}/${registry.length}: ${entry.fileName} (${entry.dataType})`);
       
-      // Buka spreadsheet eksternal
       const externalSs = SpreadsheetApp.openById(entry.spreadsheetId);
       const sheet = externalSs.getSheetByName(entry.sheetName);
       
@@ -195,7 +182,6 @@ function loadAllDataFromExternalFiles(registry) {
       const headers = sheetData[0];
       let rowCount = 0;
       
-      // Parse data
       for (let i = 1; i < sheetData.length; i++) {
         const row = {};
         let hasData = false;
@@ -208,11 +194,10 @@ function loadAllDataFromExternalFiles(registry) {
           row[header] = value;
         });
         
-        if (!hasData) continue; // Skip baris kosong
+        if (!hasData) continue;
         
         rowCount++;
         
-        // Kategorikan berdasarkan tipe data
         switch(entry.dataType) {
           case 'Claim':
             data.claims.push(row);
@@ -235,7 +220,7 @@ function loadAllDataFromExternalFiles(registry) {
           case 'Invoice':
             data.invoices.push(row);
             break;
-          case 'Hub Freeze':                    // ← BARU: handle tipe data Hub Freeze
+          case 'Hub Freeze':
             data.freezeHubs.push(row);
             break;
           default:
@@ -255,7 +240,6 @@ function loadAllDataFromExternalFiles(registry) {
     }
   });
   
-  // Log summary
   Logger.log('=== DATA LOADING SUMMARY ===');
   Logger.log(`Claims: ${data.claims.length} rows`);
   Logger.log(`Refund NEK: ${data.refundNek.length} rows`);
@@ -264,7 +248,7 @@ function loadAllDataFromExternalFiles(registry) {
   Logger.log(`Payroll Hold: ${data.payrollHold.length} rows`);
   Logger.log(`Hubs: ${data.hubs.length} rows`);
   Logger.log(`Invoices: ${data.invoices.length} rows`);
-  Logger.log(`Freeze Hubs: ${data.freezeHubs.length} rows`);  // ← BARU
+  Logger.log(`Freeze Hubs: ${data.freezeHubs.length} rows`);
   
   return data;
 }
@@ -273,7 +257,6 @@ function loadAllDataFromExternalFiles(registry) {
 function generateSummaryData(allData) {
   const summaryMap = new Map();
   
-  // 1. Inisialisasi dari HUB data sebagai patokan
   allData.hubs.forEach(hub => {
     const hubName = (hub['HUB Name'] || hub['Hub Name'] || '').toString().toUpperCase().trim();
     const city = (hub['City'] || '').toString().toUpperCase().trim();
@@ -287,7 +270,7 @@ function generateSummaryData(allData) {
         hub: hubName,
         city: city,
         province: province,
-        region: hub['Region'] || '',
+        region: hub['Sub-Region'] || '',
         lead: hub['Lead Region'] || '',
         asstLead: hub['Asst Lead'] || '',
         picArea: hub['PIC Area'] || '',
@@ -301,10 +284,8 @@ function generateSummaryData(allData) {
   
   Logger.log(`Total hubs dari HUB RAW: ${summaryMap.size}`);
 
-  // ← BARU: Build Set nama hub yang sedang freeze untuk lookup O(1)
   const freezeSet = new Set();
   allData.freezeHubs.forEach(freeze => {
-    // Kolom nama hub di sheet freeze adalah "hub" (lowercase)
     const hubName = (freeze['hub'] || freeze['Hub'] || freeze['HUB'] || '').toString().toUpperCase().trim();
     if (hubName) freezeSet.add(hubName);
   });
@@ -324,11 +305,9 @@ function generateSummaryData(allData) {
     
     if (!location || !month) return;
     
-    // Cari hub yang exact match atau buat hub baru jika tidak ada
     let hubData = summaryMap.get(location);
     
     if (!hubData) {
-      // Hub tidak ada di HUB RAW, buat hub baru
       Logger.log(`Hub baru ditemukan di Claim: ${location}`);
       hubData = {
         hub: location,
@@ -354,14 +333,10 @@ function generateSummaryData(allData) {
     
     const monthData = hubData.months.get(month);
     
-    // Unique key untuk count case: ID + Nama + Hub + Case Type + Bulan
     const uniqueCaseKey = `${driverId}|${driverName.trim().toUpperCase()}|${location}|${caseType}`;
-    
-    // Unique key untuk count contract: ID + Nama + Hub + Contract + Bulan
     const contractClean = contract.trim();
     const uniqueContractKey = `${driverId}|${driverName.trim().toUpperCase()}|${location}|${contractClean}`;
     
-    // Kategorikan berdasarkan Case Type dan Function
     if (caseType.includes('COD')) {
       if (func === 'CF') monthData.cfCod += amount;
       else monthData.ncfCod += amount;
@@ -379,7 +354,6 @@ function generateSummaryData(allData) {
       monthData.uniqueCaseOther.add(uniqueCaseKey);
     }
     
-    // Count contract type (unique)
     if (contractClean && driverId && driverId.toString().trim() !== '') {
       if (contractClean === 'Rider Mitra') {
         monthData.uniqueRiderMitra.add(uniqueContractKey);
@@ -396,7 +370,6 @@ function generateSummaryData(allData) {
       }
     }
     
-    // Track unique drivers - simple count unique ID, skip empty
     if (driverId && driverId.toString().trim() !== '') {
       const driverIdStr = driverId.toString().trim();
       const driverNameClean = driverName ? driverName.toString().trim().toUpperCase() : '';
@@ -598,14 +571,12 @@ function generateSummaryData(allData) {
     const monthData = hubData.months.get(month);
     monthData.invoice += amount;
     
-    // Track invoice per function
     if (func === 'CF') {
       monthData.invoiceCf += amount;
     } else if (func === 'NCF') {
       monthData.invoiceNcf += amount;
     }
     
-    // Track unique employees - simple count unique ID, skip empty
     if (empId && empId.toString().trim() !== '') {
       const empIdStr = empId.toString().trim();
       const empNameClean = empName ? empName.toString().trim().toUpperCase() : '';
@@ -633,38 +604,34 @@ function generateSummaryData(allData) {
       const totalRecovery = monthData.holdGaji + monthData.refundNek + 
                            monthData.refundEwallet + monthData.collectPic;
       
-      // Calculate loss (bisa minus), principal loss (tidak bisa minus), dan fraud hold
-      const totalLoss = totalFraud - totalRecovery; // Bisa minus
-      const principalLoss = totalFraud >= totalRecovery ? totalFraud - totalRecovery : 0; // Tidak bisa minus
-      const fraudHold = totalFraud < totalRecovery ? Math.abs(totalRecovery - totalFraud) : 0; // Surplus
+      const totalLoss = totalFraud - totalRecovery;
+      const principalLoss = totalFraud >= totalRecovery ? totalFraud - totalRecovery : 0;
+      const fraudHold = totalFraud < totalRecovery ? Math.abs(totalRecovery - totalFraud) : 0;
       
-      // Count duplicate employees - berapa nama yang punya lebih dari 1 ID
       const duplicateCount = calculateDuplicateNames(monthData.activeEmployees, monthData.activeEmployeeNames);
-      
-      // Check if hub name contains "HUB"
       const isHub = hubData.hub.includes('HUB') ? 1 : 0;
-
-      // ← BARU: Check if hub ada di daftar freeze (lookup O(1) ke freezeSet)
       const isFreeze = freezeSet.has(hubData.hub) ? 1 : 0;
-      
-      // Count case total
       const countCaseTotal = monthData.uniqueCaseCod.size + monthData.uniqueCaseLnd.size + monthData.uniqueCaseOther.size;
-      
-      // Count case HUB and DC
       const countCaseHub = isHub === 1 ? countCaseTotal : 0;
       const countCaseDc = isHub === 0 ? countCaseTotal : 0;
-      
-      // Calculate fraud amount by contract
       const totalMitraFraud = monthData.riderMitraFraud + monthData.operatorMitraFraud;
       const totalDedicatedFraud = monthData.riderDedicatedFraud + monthData.operatorDedicatedFraud;
-      
-      // Count contract
       const riderMitra = monthData.uniqueRiderMitra.size;
       const operatorMitra = monthData.uniqueOperatorMitra.size;
       const riderDedicated = monthData.uniqueRiderDedicated.size;
       const operatorDedicated = monthData.uniqueOperatorDedicated.size;
       const totalMitra = riderMitra + operatorMitra;
       const totalDedicated = riderDedicated + operatorDedicated;
+
+      // ← BARU: label kombinasi tipe fraud yang ada nilainya
+      // Logika: kumpulkan tipe yang non-zero, gabung dengan spasi
+      // Hasil: "COD", "LND", "OTHER", "COD LND", "COD OTHER",
+      //        "LND OTHER", "COD LND OTHER", atau "" jika semua nol
+      const caseParts = [];
+      if (monthData.cod > 0)   caseParts.push('COD');
+      if (monthData.lnd > 0)   caseParts.push('LND');
+      if (monthData.other > 0) caseParts.push('OTHER');
+      const caseLabel = caseParts.join(' ');
       
       result.push([
         month,                              // idx 0
@@ -679,7 +646,7 @@ function generateSummaryData(allData) {
         hubData.provinceLatLon,             // idx 9
         hubData.hubLatLon,                  // idx 10
         isHub,                              // idx 11
-        isFreeze,                           // idx 12 ← BARU
+        isFreeze,                           // idx 12
         monthData.cfCod || 0,              // idx 13
         monthData.ncfCod || 0,             // idx 14
         monthData.cfLnd || 0,              // idx 15
@@ -692,55 +659,51 @@ function generateSummaryData(allData) {
         monthData.lnd || 0,                // idx 22
         monthData.other || 0,              // idx 23
         totalFraud || 0,                   // idx 24
-        monthData.riderMitraFraud || 0,    // idx 25
-        monthData.operatorMitraFraud || 0, // idx 26
-        monthData.riderDedicatedFraud || 0,// idx 27
-        monthData.operatorDedicatedFraud || 0, // idx 28
-        totalMitraFraud || 0,              // idx 29
-        totalDedicatedFraud || 0,          // idx 30
-        monthData.uniqueCaseCod.size || 0, // idx 31
-        monthData.uniqueCaseLnd.size || 0, // idx 32
-        monthData.uniqueCaseOther.size || 0,// idx 33
-        countCaseTotal || 0,               // idx 34
-        countCaseHub || 0,                 // idx 35
-        countCaseDc || 0,                  // idx 36
-        monthData.holdGaji || 0,           // idx 37
-        monthData.refundNek || 0,          // idx 38
-        monthData.refundEwallet || 0,      // idx 39
-        monthData.collectPic || 0,         // idx 40
-        totalRecovery || 0,                // idx 41
-        totalLoss || 0,                    // idx 42
-        principalLoss || 0,                // idx 43
-        fraudHold || 0,                    // idx 44
-        monthData.invoiceCf || 0,          // idx 45
-        monthData.invoiceNcf || 0,         // idx 46
-        monthData.invoice || 0,            // idx 47
-        monthData.cfEmployees.size || 0,   // idx 48
-        monthData.ncfEmployees.size || 0,  // idx 49
-        monthData.cfFraudDrivers.size || 0,// idx 50
-        monthData.ncfFraudDrivers.size || 0,// idx 51
-        monthData.activeEmployees.size || 0,// idx 52
-        duplicateCount || 0,               // idx 53
-        monthData.fraudDrivers.size || 0,  // idx 54
-        riderMitra || 0,                   // idx 55
-        operatorMitra || 0,                // idx 56
-        riderDedicated || 0,               // idx 57
-        operatorDedicated || 0,            // idx 58
-        totalMitra || 0,                   // idx 59
-        totalDedicated || 0                // idx 60
+        caseLabel,                         // idx 25 ← BARU
+        monthData.riderMitraFraud || 0,    // idx 26
+        monthData.operatorMitraFraud || 0, // idx 27
+        monthData.riderDedicatedFraud || 0,// idx 28
+        monthData.operatorDedicatedFraud || 0, // idx 29
+        totalMitraFraud || 0,              // idx 30
+        totalDedicatedFraud || 0,          // idx 31
+        monthData.uniqueCaseCod.size || 0, // idx 32
+        monthData.uniqueCaseLnd.size || 0, // idx 33
+        monthData.uniqueCaseOther.size || 0,// idx 34
+        countCaseTotal || 0,               // idx 35
+        countCaseHub || 0,                 // idx 36
+        countCaseDc || 0,                  // idx 37
+        monthData.holdGaji || 0,           // idx 38
+        monthData.refundNek || 0,          // idx 39
+        monthData.refundEwallet || 0,      // idx 40
+        monthData.collectPic || 0,         // idx 41
+        totalRecovery || 0,                // idx 42
+        totalLoss || 0,                    // idx 43
+        principalLoss || 0,                // idx 44
+        fraudHold || 0,                    // idx 45
+        monthData.invoiceCf || 0,          // idx 46
+        monthData.invoiceNcf || 0,         // idx 47
+        monthData.invoice || 0,            // idx 48
+        monthData.cfEmployees.size || 0,   // idx 49
+        monthData.ncfEmployees.size || 0,  // idx 50
+        monthData.cfFraudDrivers.size || 0,// idx 51
+        monthData.ncfFraudDrivers.size || 0,// idx 52
+        monthData.activeEmployees.size || 0,// idx 53
+        duplicateCount || 0,               // idx 54
+        monthData.fraudDrivers.size || 0,  // idx 55
+        riderMitra || 0,                   // idx 56
+        operatorMitra || 0,                // idx 57
+        riderDedicated || 0,               // idx 58
+        operatorDedicated || 0,            // idx 59
+        totalMitra || 0,                   // idx 60
+        totalDedicated || 0                // idx 61
       ]);
     }
   }
   
-  // Sort berdasarkan bulan (ascending) lalu hub name
   result.sort((a, b) => {
     const monthA = parseMonthForSort(a[0]);
     const monthB = parseMonthForSort(b[0]);
-    
-    if (monthA !== monthB) {
-      return monthA - monthB;
-    }
-    
+    if (monthA !== monthB) return monthA - monthB;
     return a[1].localeCompare(b[1]);
   });
   
@@ -780,15 +743,11 @@ function initMonthData() {
 }
 
 function calculateDuplicateNames(idSet, nameSet) {
-  // Duplicate = berapa nama yang punya lebih dari 1 ID
-  // Jika ada 10 ID unik tapi hanya 8 nama unik, berarti ada 2 nama yang duplicate
   return idSet.size - nameSet.size;
 }
 
 function matchLocation(location, hubName) {
   if (!location || !hubName) return false;
-  
-  // Exact match only
   return location === hubName;
 }
 
@@ -797,7 +756,6 @@ function parseMonth(dateStr) {
   
   const str = dateStr.toString().trim();
   
-  // Format: "November 2025" atau "Nov 2025"
   const monthMap = {
     'JANUARY': 'January', 'JAN': 'January',
     'FEBRUARY': 'February', 'FEB': 'February',
@@ -839,10 +797,8 @@ function parseMonthForSort(monthStr) {
   const parts = monthStr.split(' ');
   const month = parts[0];
   const year = parseInt(parts[1]) || 0;
-  
   const monthNum = monthOrder[month] || 0;
   
-  // Return format: YYYYMM (e.g., 202501 for January 2025)
   return year * 100 + monthNum;
 }
 
@@ -854,16 +810,13 @@ function showProcessingIndicator(ss) {
     summarySheet = ss.insertSheet(CONFIG.SHEET_NAMES.SUMMARY);
   }
   
-  // Hitung kolom terakhir yang ada data
   const lastCol = CONFIG.SUMMARY_HEADERS.length;
   
-  // Clear hanya area data (tidak termasuk header dan kolom tambahan)
   if (summarySheet.getLastRow() > 1) {
     const rangeToClear = summarySheet.getRange(2, 1, summarySheet.getLastRow() - 1, lastCol);
     rangeToClear.clearContent();
   }
   
-  // Tulis "Processing..." di cell A2
   summarySheet.getRange(2, 1).setValue('Processing...').setFontStyle('italic').setFontColor('#999999');
   SpreadsheetApp.flush();
 }
@@ -875,16 +828,13 @@ function writeSummaryToSheet(ss, summaryData) {
     summarySheet = ss.insertSheet(CONFIG.SHEET_NAMES.SUMMARY);
   }
   
-  // Hitung kolom terakhir yang ada data
   const lastCol = CONFIG.SUMMARY_HEADERS.length;
   
-  // Clear area data termasuk "Processing..." (tidak termasuk header dan kolom tambahan)
   if (summarySheet.getLastRow() > 1) {
     const rangeToClear = summarySheet.getRange(2, 1, summarySheet.getLastRow() - 1, lastCol);
     rangeToClear.clearContent();
   }
   
-  // Tulis header jika belum ada atau masih kosong
   if (summarySheet.getLastRow() === 0 || summarySheet.getRange(1, 1).getValue() === '') {
     summarySheet.getRange(1, 1, 1, CONFIG.SUMMARY_HEADERS.length)
       .setValues([CONFIG.SUMMARY_HEADERS])
@@ -895,18 +845,18 @@ function writeSummaryToSheet(ss, summaryData) {
       .setBorder(true, true, true, true, false, false, '#000000', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
   }
   
-  // Tulis data
   if (summaryData.length > 0) {
     summarySheet.getRange(2, 1, summaryData.length, summaryData[0].length)
       .setValues(summaryData);
     
-    // Format angka mulai kolom 14 (setelah is_hub di col 12 dan is_freeze di col 13)
-    // ← PERUBAHAN: geser dari 13 → 14 karena ada kolom is_freeze baru di posisi 13
-    summarySheet.getRange(2, 14, summaryData.length, 48)
+    // Format angka: col 14 (CF COD) s/d akhir = 49 kolom
+    // Col 14-25 = numeric, col 26 = Case (text, format #,##0 tidak mempengaruhi teks),
+    // col 27-62 = numeric. Satu range cukup karena Sheets tidak mengubah tampilan teks.
+    // ← PERUBAHAN: 48 → 49 karena ada kolom Case baru di posisi 26
+    summarySheet.getRange(2, 14, summaryData.length, 49)
       .setNumberFormat('#,##0');
   }
   
-  // Freeze header row
   summarySheet.setFrozenRows(1);
   
   Logger.log('Data successfully written to sheet');
@@ -943,20 +893,21 @@ function calculateLogSummary(summaryData) {
     fraudDrivers: 0
   };
   
-  // ← PERUBAHAN: semua index geser +1 karena is_freeze masuk di idx 12
+  // Idx 0-24 tidak berubah. Idx >= 25 geser +1 karena kolom Case masuk di idx 25.
   summaryData.forEach(row => {
-    summary.cod            += row[21] || 0;  // COD            (was 19, now 21)
-    summary.lnd            += row[22] || 0;  // LND            (was 20, now 22)
-    summary.other          += row[23] || 0;  // OTHER          (was 21, now 23)
-    summary.totalFraud     += row[24] || 0;  // Total Fraud    (was 22, now 24)
-    summary.holdGaji       += row[37] || 0;  // Hold Gaji      (was 33, now 37... wait)
-    summary.refundNek      += row[38] || 0;  // Refund NEK     (was 34, now 38)
-    summary.refundEwallet  += row[39] || 0;  // Refund Ewallet (was 35, now 39)
-    summary.collectPic     += row[40] || 0;  // Collect PIC    (was 36, now 40)
-    summary.totalRecovery  += row[41] || 0;  // Total Recovery (was 37, now 41)
-    summary.totalLoss      += row[42] || 0;  // Total Loss     (was 38, now 42)
-    summary.activeEmployees+= row[52] || 0;  // Karyawan Aktif (was 46, now 52... wait)
-    summary.fraudDrivers   += row[54] || 0;  // Karyawan Fraud (was 48, now 54)
+    summary.cod            += row[21] || 0;  // COD            idx 21 (tidak berubah)
+    summary.lnd            += row[22] || 0;  // LND            idx 22
+    summary.other          += row[23] || 0;  // OTHER          idx 23
+    summary.totalFraud     += row[24] || 0;  // Total Fraud    idx 24
+    // ← PERUBAHAN: semua idx berikut geser +1 karena Case ada di idx 25
+    summary.holdGaji       += row[38] || 0;  // Hold Gaji      idx 38 (was 37)
+    summary.refundNek      += row[39] || 0;  // Refund NEK     idx 39 (was 38)
+    summary.refundEwallet  += row[40] || 0;  // Refund Ewallet idx 40 (was 39)
+    summary.collectPic     += row[41] || 0;  // Collect PIC    idx 41 (was 40)
+    summary.totalRecovery  += row[42] || 0;  // Total Recovery idx 42 (was 41)
+    summary.totalLoss      += row[43] || 0;  // Total Loss     idx 43 (was 42)
+    summary.activeEmployees+= row[53] || 0;  // Karyawan Aktif idx 53 (was 52)
+    summary.fraudDrivers   += row[55] || 0;  // Karyawan Fraud idx 55 (was 54)
   });
   
   return summary;
@@ -992,31 +943,30 @@ function logExecution(ss, logData) {
   const summary = logData.summary || {};
   
   const rowData = [
-    now,                              // Time Execute / Run
-    now,                              // Last Updated
-    logData.filesProcessed,           // Files Processed
-    logData.totalRecords,             // Total Records
-    logData.rowsProcessed,            // Rows Processed
-    (logData.duration / 60).toFixed(2), // Duration (min)
-    logData.status,                   // Status
-    summary.cod || 0,                 // COD
-    summary.lnd || 0,                 // LND
-    summary.other || 0,               // OTHER
-    summary.totalFraud || 0,          // Total Fraud
-    summary.holdGaji || 0,            // Hold Gaji
-    summary.refundNek || 0,           // Refund NEK
-    summary.refundEwallet || 0,       // Refund E-Wallet
-    summary.collectPic || 0,          // Collect by PIC
-    summary.totalRecovery || 0,       // Total Recovery
-    summary.totalLoss || 0,           // Total Loss
-    summary.activeEmployees || 0,     // Total Employee
-    summary.fraudDrivers || 0,        // Employee Fraud
-    logData.error                     // Error Detail
+    now,
+    now,
+    logData.filesProcessed,
+    logData.totalRecords,
+    logData.rowsProcessed,
+    (logData.duration / 60).toFixed(2),
+    logData.status,
+    summary.cod || 0,
+    summary.lnd || 0,
+    summary.other || 0,
+    summary.totalFraud || 0,
+    summary.holdGaji || 0,
+    summary.refundNek || 0,
+    summary.refundEwallet || 0,
+    summary.collectPic || 0,
+    summary.totalRecovery || 0,
+    summary.totalLoss || 0,
+    summary.activeEmployees || 0,
+    summary.fraudDrivers || 0,
+    logData.error
   ];
   
   logSheet.appendRow(rowData);
   
-  // Format status
   const lastRow = logSheet.getLastRow();
   const statusCell = logSheet.getRange(lastRow, 7);
   if (logData.status === 'Success') {
@@ -1025,10 +975,7 @@ function logExecution(ss, logData) {
     statusCell.setBackground('#F4C7C3').setFontWeight('bold');
   }
   
-  // Format angka di kolom summary (kolom 8-19)
   logSheet.getRange(lastRow, 8, 1, 12).setNumberFormat('#,##0');
-  
-  // Auto resize
   logSheet.autoResizeColumns(1, 20);
 }
 
@@ -1049,7 +996,7 @@ function showAbout() {
   const html = `
     <div style="font-family: Arial; padding: 20px;">
       <h2 style="color: #4285F4;">📊 Fraud Summary Generator</h2>
-      <p><strong>Version:</strong> 2.1.0</p>
+      <p><strong>Version:</strong> 2.2.0</p>
       <p><strong>Description:</strong> Generate summary fraud data dari berbagai file Google Sheets terpisah</p>
       <hr>
       <h3>✨ Features:</h3>
@@ -1059,6 +1006,7 @@ function showAbout() {
         <li>🎯 Tracking fraud CF & NCF</li>
         <li>💰 Calculate recovery dan loss otomatis</li>
         <li>🧊 Kolom is_freeze: deteksi hub yang sedang di-freeze</li>
+        <li>🏷️ Kolom Case: label kombinasi tipe fraud (COD / LND / OTHER / kombinasi)</li>
         <li>📝 Logging setiap eksekusi dengan detail</li>
         <li>🔄 Dynamic: Cukup update FILE_REGISTRY untuk tambah data baru</li>
       </ul>
@@ -1089,19 +1037,14 @@ function showAbout() {
 // ===== TRIGGER METADATA MANAGEMENT =====
 function saveTriggerMetadata(triggerId, hari, jam) {
   const props = PropertiesService.getScriptProperties();
-  const metadata = {
-    hari: hari,
-    jam: jam
-  };
+  const metadata = { hari: hari, jam: jam };
   props.setProperty('trigger_' + triggerId, JSON.stringify(metadata));
 }
 
 function getTriggerMetadata(triggerId) {
   const props = PropertiesService.getScriptProperties();
   const data = props.getProperty('trigger_' + triggerId);
-  if (data) {
-    return JSON.parse(data);
-  }
+  if (data) return JSON.parse(data);
   return { hari: 'Setiap hari', jam: '-' };
 }
 
@@ -1161,15 +1104,12 @@ function viewActiveTriggers() {
         resultDiv.innerHTML = '⏳ Menghapus trigger...';
         resultDiv.style.background = '#fff3cd';
         resultDiv.style.color = '#856404';
-        
         google.script.run
           .withSuccessHandler(function(result) {
             resultDiv.innerHTML = '✅ ' + result;
             resultDiv.style.background = '#d4edda';
             resultDiv.style.color = '#155724';
-            setTimeout(function() {
-              google.script.host.close();
-            }, 1500);
+            setTimeout(function() { google.script.host.close(); }, 1500);
           })
           .withFailureHandler(function(error) {
             resultDiv.innerHTML = '❌ Error: ' + error;
@@ -1181,52 +1121,37 @@ function viewActiveTriggers() {
     </script>
   `;
   
-  const htmlOutput = HtmlService.createHtmlOutput(html)
-    .setWidth(650)
-    .setHeight(400);
-  
+  const htmlOutput = HtmlService.createHtmlOutput(html).setWidth(650).setHeight(400);
   SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Active Triggers');
 }
 
 function getTriggerInfo(trigger) {
   let hari = 'Setiap hari';
   let jam = '-';
-  
   try {
-    const handlerFunction = trigger.getHandlerFunction();
-    const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
-    const dayNames = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
     const triggerUid = trigger.getUniqueId();
     const allTriggers = ScriptApp.getProjectTriggers();
     for (let t of allTriggers) {
-      if (t.getUniqueId() === triggerUid) {
-        break;
-      }
+      if (t.getUniqueId() === triggerUid) { break; }
     }
   } catch (e) {
     Logger.log('Error getting trigger info: ' + e);
   }
-  
   return { hari: hari, jam: jam };
 }
 
 function deleteTriggerById(triggerId) {
   const triggers = ScriptApp.getProjectTriggers();
   let deleted = false;
-  
   triggers.forEach(trigger => {
     if (trigger.getUniqueId() === triggerId) {
       ScriptApp.deleteTrigger(trigger);
-      deleteTriggerMetadata(triggerId); // Hapus metadata juga
+      deleteTriggerMetadata(triggerId);
       deleted = true;
     }
   });
-  
-  if (deleted) {
-    return 'Trigger berhasil dihapus!';
-  } else {
-    throw new Error('Trigger tidak ditemukan');
-  }
+  if (deleted) return 'Trigger berhasil dihapus!';
+  throw new Error('Trigger tidak ditemukan');
 }
 
 // ===== WEEKDAY TRIGGERS =====
@@ -1236,109 +1161,33 @@ function showWeekdayTriggerDialog() {
       <h3>📅 Set Weekday Triggers (3x Daily)</h3>
       <p>Script akan otomatis dijalankan <strong>3 kali sehari</strong> pada <strong>hari kerja</strong> (Senin-Jumat).</p>
       <hr>
-      
       <h4>Pilih Mode:</h4>
       <input type="radio" id="custom" name="mode" value="custom" checked>
       <label for="custom"><strong>Custom Time</strong> - Pilih 3 jam sendiri</label><br><br>
-      
       <input type="radio" id="interval" name="mode" value="interval">
       <label for="interval"><strong>Interval</strong> - Otomatis setiap 8 jam (08:00, 16:00, 00:00)</label><br><br>
-      
       <hr>
       <div id="customTime">
         <h4>Pilih 3 Jam untuk Trigger:</h4>
         <label for="hour1">Trigger 1:</label>
         <select id="hour1" style="width: 100%; padding: 8px; margin: 5px 0;">
           <option value="8" selected>08:00 (8 AM)</option>
-          <option value="0">00:00 (Midnight)</option>
-          <option value="1">01:00 (1 AM)</option>
-          <option value="2">02:00 (2 AM)</option>
-          <option value="3">03:00 (3 AM)</option>
-          <option value="4">04:00 (4 AM)</option>
-          <option value="5">05:00 (5 AM)</option>
-          <option value="6">06:00 (6 AM)</option>
-          <option value="7">07:00 (7 AM)</option>
-          <option value="9">09:00 (9 AM)</option>
-          <option value="10">10:00 (10 AM)</option>
-          <option value="11">11:00 (11 AM)</option>
-          <option value="12">12:00 (12 PM)</option>
-          <option value="13">13:00 (1 PM)</option>
-          <option value="14">14:00 (2 PM)</option>
-          <option value="15">15:00 (3 PM)</option>
-          <option value="16">16:00 (4 PM)</option>
-          <option value="17">17:00 (5 PM)</option>
-          <option value="18">18:00 (6 PM)</option>
-          <option value="19">19:00 (7 PM)</option>
-          <option value="20">20:00 (8 PM)</option>
-          <option value="21">21:00 (9 PM)</option>
-          <option value="22">22:00 (10 PM)</option>
-          <option value="23">23:00 (11 PM)</option>
+          <option value="0">00:00 (Midnight)</option><option value="1">01:00 (1 AM)</option><option value="2">02:00 (2 AM)</option><option value="3">03:00 (3 AM)</option><option value="4">04:00 (4 AM)</option><option value="5">05:00 (5 AM)</option><option value="6">06:00 (6 AM)</option><option value="7">07:00 (7 AM)</option><option value="9">09:00 (9 AM)</option><option value="10">10:00 (10 AM)</option><option value="11">11:00 (11 AM)</option><option value="12">12:00 (12 PM)</option><option value="13">13:00 (1 PM)</option><option value="14">14:00 (2 PM)</option><option value="15">15:00 (3 PM)</option><option value="16">16:00 (4 PM)</option><option value="17">17:00 (5 PM)</option><option value="18">18:00 (6 PM)</option><option value="19">19:00 (7 PM)</option><option value="20">20:00 (8 PM)</option><option value="21">21:00 (9 PM)</option><option value="22">22:00 (10 PM)</option><option value="23">23:00 (11 PM)</option>
         </select>
-        
         <label for="hour2" style="margin-top: 10px; display: block;">Trigger 2:</label>
         <select id="hour2" style="width: 100%; padding: 8px; margin: 5px 0;">
           <option value="14" selected>14:00 (2 PM)</option>
-          <option value="0">00:00 (Midnight)</option>
-          <option value="1">01:00 (1 AM)</option>
-          <option value="2">02:00 (2 AM)</option>
-          <option value="3">03:00 (3 AM)</option>
-          <option value="4">04:00 (4 AM)</option>
-          <option value="5">05:00 (5 AM)</option>
-          <option value="6">06:00 (6 AM)</option>
-          <option value="7">07:00 (7 AM)</option>
-          <option value="8">08:00 (8 AM)</option>
-          <option value="9">09:00 (9 AM)</option>
-          <option value="10">10:00 (10 AM)</option>
-          <option value="11">11:00 (11 AM)</option>
-          <option value="12">12:00 (12 PM)</option>
-          <option value="13">13:00 (1 PM)</option>
-          <option value="15">15:00 (3 PM)</option>
-          <option value="16">16:00 (4 PM)</option>
-          <option value="17">17:00 (5 PM)</option>
-          <option value="18">18:00 (6 PM)</option>
-          <option value="19">19:00 (7 PM)</option>
-          <option value="20">20:00 (8 PM)</option>
-          <option value="21">21:00 (9 PM)</option>
-          <option value="22">22:00 (10 PM)</option>
-          <option value="23">23:00 (11 PM)</option>
+          <option value="0">00:00 (Midnight)</option><option value="1">01:00 (1 AM)</option><option value="2">02:00 (2 AM)</option><option value="3">03:00 (3 AM)</option><option value="4">04:00 (4 AM)</option><option value="5">05:00 (5 AM)</option><option value="6">06:00 (6 AM)</option><option value="7">07:00 (7 AM)</option><option value="8">08:00 (8 AM)</option><option value="9">09:00 (9 AM)</option><option value="10">10:00 (10 AM)</option><option value="11">11:00 (11 AM)</option><option value="12">12:00 (12 PM)</option><option value="13">13:00 (1 PM)</option><option value="15">15:00 (3 PM)</option><option value="16">16:00 (4 PM)</option><option value="17">17:00 (5 PM)</option><option value="18">18:00 (6 PM)</option><option value="19">19:00 (7 PM)</option><option value="20">20:00 (8 PM)</option><option value="21">21:00 (9 PM)</option><option value="22">22:00 (10 PM)</option><option value="23">23:00 (11 PM)</option>
         </select>
-        
         <label for="hour3" style="margin-top: 10px; display: block;">Trigger 3:</label>
         <select id="hour3" style="width: 100%; padding: 8px; margin: 5px 0;">
           <option value="20" selected>20:00 (8 PM)</option>
-          <option value="0">00:00 (Midnight)</option>
-          <option value="1">01:00 (1 AM)</option>
-          <option value="2">02:00 (2 AM)</option>
-          <option value="3">03:00 (3 AM)</option>
-          <option value="4">04:00 (4 AM)</option>
-          <option value="5">05:00 (5 AM)</option>
-          <option value="6">06:00 (6 AM)</option>
-          <option value="7">07:00 (7 AM)</option>
-          <option value="8">08:00 (8 AM)</option>
-          <option value="9">09:00 (9 AM)</option>
-          <option value="10">10:00 (10 AM)</option>
-          <option value="11">11:00 (11 AM)</option>
-          <option value="12">12:00 (12 PM)</option>
-          <option value="13">13:00 (1 PM)</option>
-          <option value="14">14:00 (2 PM)</option>
-          <option value="15">15:00 (3 PM)</option>
-          <option value="16">16:00 (4 PM)</option>
-          <option value="17">17:00 (5 PM)</option>
-          <option value="18">18:00 (6 PM)</option>
-          <option value="19">19:00 (7 PM)</option>
-          <option value="21">21:00 (9 PM)</option>
-          <option value="22">22:00 (10 PM)</option>
-          <option value="23">23:00 (11 PM)</option>
+          <option value="0">00:00 (Midnight)</option><option value="1">01:00 (1 AM)</option><option value="2">02:00 (2 AM)</option><option value="3">03:00 (3 AM)</option><option value="4">04:00 (4 AM)</option><option value="5">05:00 (5 AM)</option><option value="6">06:00 (6 AM)</option><option value="7">07:00 (7 AM)</option><option value="8">08:00 (8 AM)</option><option value="9">09:00 (9 AM)</option><option value="10">10:00 (10 AM)</option><option value="11">11:00 (11 AM)</option><option value="12">12:00 (12 PM)</option><option value="13">13:00 (1 PM)</option><option value="14">14:00 (2 PM)</option><option value="15">15:00 (3 PM)</option><option value="16">16:00 (4 PM)</option><option value="17">17:00 (5 PM)</option><option value="18">18:00 (6 PM)</option><option value="19">19:00 (7 PM)</option><option value="21">21:00 (9 PM)</option><option value="22">22:00 (10 PM)</option><option value="23">23:00 (11 PM)</option>
         </select>
       </div>
-      
       <br><br>
-      <button onclick="setWeekdayTriggers()" style="background: #4285F4; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
-        ✅ Set Triggers
-      </button>
-      <button onclick="google.script.host.close()" style="background: #ccc; color: black; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-left: 10px;">
-        Cancel
-      </button>
+      <button onclick="setWeekdayTriggers()" style="background: #4285F4; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">✅ Set Triggers</button>
+      <button onclick="google.script.host.close()" style="background: #ccc; color: black; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-left: 10px;">Cancel</button>
       <div id="result" style="margin-top: 20px; padding: 10px; display: none;"></div>
     </div>
     <script>
@@ -1349,41 +1198,21 @@ function showWeekdayTriggerDialog() {
         resultDiv.innerHTML = '⏳ Setting triggers...';
         resultDiv.style.background = '#fff3cd';
         resultDiv.style.color = '#856404';
-        
         let hours = [];
         if (mode === 'custom') {
-          hours = [
-            parseInt(document.getElementById('hour1').value),
-            parseInt(document.getElementById('hour2').value),
-            parseInt(document.getElementById('hour3').value)
-          ];
+          hours = [parseInt(document.getElementById('hour1').value), parseInt(document.getElementById('hour2').value), parseInt(document.getElementById('hour3').value)];
         } else {
-          hours = [8, 16, 0]; // Interval mode: 08:00, 16:00, 00:00
+          hours = [8, 16, 0];
         }
-        
         google.script.run
-          .withSuccessHandler(function(result) {
-            resultDiv.innerHTML = '✅ ' + result;
-            resultDiv.style.background = '#d4edda';
-            resultDiv.style.color = '#155724';
-            setTimeout(function() {
-              google.script.host.close();
-            }, 2000);
-          })
-          .withFailureHandler(function(error) {
-            resultDiv.innerHTML = '❌ Error: ' + error;
-            resultDiv.style.background = '#f8d7da';
-            resultDiv.style.color = '#721c24';
-          })
+          .withSuccessHandler(function(result) { resultDiv.innerHTML = '✅ ' + result; resultDiv.style.background = '#d4edda'; resultDiv.style.color = '#155724'; setTimeout(function() { google.script.host.close(); }, 2000); })
+          .withFailureHandler(function(error) { resultDiv.innerHTML = '❌ Error: ' + error; resultDiv.style.background = '#f8d7da'; resultDiv.style.color = '#721c24'; })
           .createWeekdayTriggers(hours);
       }
     </script>
   `;
   
-  const htmlOutput = HtmlService.createHtmlOutput(html)
-    .setWidth(500)
-    .setHeight(650);
-  
+  const htmlOutput = HtmlService.createHtmlOutput(html).setWidth(500).setHeight(650);
   SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Set Weekday Triggers');
 }
 
@@ -1403,7 +1232,6 @@ function createWeekdayTriggers(hours) {
         .atHour(hour)
         .onWeekDay(dayInfo.day)
         .create();
-      
       saveTriggerMetadata(trigger.getUniqueId(), dayInfo.name, String(hour).padStart(2, '0') + ':00');
     });
   });
@@ -1422,37 +1250,11 @@ function showTriggerDialog() {
       <label for="hour"><strong>Pilih Jam:</strong></label><br>
       <select id="hour" style="width: 100%; padding: 8px; margin: 10px 0; font-size: 14px;">
         <option value="2">02:00 (2 AM) - Default</option>
-        <option value="0">00:00 (Midnight)</option>
-        <option value="1">01:00 (1 AM)</option>
-        <option value="3">03:00 (3 AM)</option>
-        <option value="4">04:00 (4 AM)</option>
-        <option value="5">05:00 (5 AM)</option>
-        <option value="6">06:00 (6 AM)</option>
-        <option value="7">07:00 (7 AM)</option>
-        <option value="8">08:00 (8 AM)</option>
-        <option value="9">09:00 (9 AM)</option>
-        <option value="10">10:00 (10 AM)</option>
-        <option value="11">11:00 (11 AM)</option>
-        <option value="12">12:00 (12 PM)</option>
-        <option value="13">13:00 (1 PM)</option>
-        <option value="14">14:00 (2 PM)</option>
-        <option value="15">15:00 (3 PM)</option>
-        <option value="16">16:00 (4 PM)</option>
-        <option value="17">17:00 (5 PM)</option>
-        <option value="18">18:00 (6 PM)</option>
-        <option value="19">19:00 (7 PM)</option>
-        <option value="20">20:00 (8 PM)</option>
-        <option value="21">21:00 (9 PM)</option>
-        <option value="22">22:00 (10 PM)</option>
-        <option value="23">23:00 (11 PM)</option>
+        <option value="0">00:00 (Midnight)</option><option value="1">01:00 (1 AM)</option><option value="3">03:00 (3 AM)</option><option value="4">04:00 (4 AM)</option><option value="5">05:00 (5 AM)</option><option value="6">06:00 (6 AM)</option><option value="7">07:00 (7 AM)</option><option value="8">08:00 (8 AM)</option><option value="9">09:00 (9 AM)</option><option value="10">10:00 (10 AM)</option><option value="11">11:00 (11 AM)</option><option value="12">12:00 (12 PM)</option><option value="13">13:00 (1 PM)</option><option value="14">14:00 (2 PM)</option><option value="15">15:00 (3 PM)</option><option value="16">16:00 (4 PM)</option><option value="17">17:00 (5 PM)</option><option value="18">18:00 (6 PM)</option><option value="19">19:00 (7 PM)</option><option value="20">20:00 (8 PM)</option><option value="21">21:00 (9 PM)</option><option value="22">22:00 (10 PM)</option><option value="23">23:00 (11 PM)</option>
       </select>
       <br><br>
-      <button onclick="setTrigger()" style="background: #4285F4; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
-        ✅ Set Trigger
-      </button>
-      <button onclick="google.script.host.close()" style="background: #ccc; color: black; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-left: 10px;">
-        Cancel
-      </button>
+      <button onclick="setTrigger()" style="background: #4285F4; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">✅ Set Trigger</button>
+      <button onclick="google.script.host.close()" style="background: #ccc; color: black; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-left: 10px;">Cancel</button>
       <div id="result" style="margin-top: 20px; padding: 10px; display: none;"></div>
     </div>
     <script>
@@ -1463,30 +1265,15 @@ function showTriggerDialog() {
         resultDiv.innerHTML = '⏳ Setting trigger...';
         resultDiv.style.background = '#fff3cd';
         resultDiv.style.color = '#856404';
-        
         google.script.run
-          .withSuccessHandler(function(result) {
-            resultDiv.innerHTML = '✅ ' + result;
-            resultDiv.style.background = '#d4edda';
-            resultDiv.style.color = '#155724';
-            setTimeout(function() {
-              google.script.host.close();
-            }, 2000);
-          })
-          .withFailureHandler(function(error) {
-            resultDiv.innerHTML = '❌ Error: ' + error;
-            resultDiv.style.background = '#f8d7da';
-            resultDiv.style.color = '#721c24';
-          })
+          .withSuccessHandler(function(result) { resultDiv.innerHTML = '✅ ' + result; resultDiv.style.background = '#d4edda'; resultDiv.style.color = '#155724'; setTimeout(function() { google.script.host.close(); }, 2000); })
+          .withFailureHandler(function(error) { resultDiv.innerHTML = '❌ Error: ' + error; resultDiv.style.background = '#f8d7da'; resultDiv.style.color = '#721c24'; })
           .createDailyTrigger(parseInt(hour));
       }
     </script>
   `;
   
-  const htmlOutput = HtmlService.createHtmlOutput(html)
-    .setWidth(400)
-    .setHeight(350);
-  
+  const htmlOutput = HtmlService.createHtmlOutput(html).setWidth(400).setHeight(350);
   SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Set Daily Trigger');
 }
 
@@ -1498,7 +1285,6 @@ function createDailyTrigger(hour) {
     .create();
   
   saveTriggerMetadata(trigger.getUniqueId(), 'Setiap hari', String(hour).padStart(2, '0') + ':00');
-  
   return `Trigger berhasil dibuat! Script akan berjalan setiap hari jam ${String(hour).padStart(2, '0')}:00`;
 }
 
@@ -1519,7 +1305,6 @@ function removeAllTriggers() {
         count++;
       }
     });
-    
     if (count > 0) {
       ui.alert(`✅ ${count} trigger berhasil dihapus.`);
     } else {
